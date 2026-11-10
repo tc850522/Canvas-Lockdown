@@ -17,6 +17,9 @@ std::wstring toLowerCase(std::wstring str) {
 // Defines exactly what "doing homework" means by building a whitelist
 bool isAuthorized(const std::wstring& procName) {
     std::vector<std::wstring> whitelist = {
+        // The Enforcer Itself
+        L"enforcer.exe",
+    
         // Educational / Authorized Apps
         L"code.exe", L"cmd.exe", L"powershell.exe", 
         L"chrome.exe", L"firefox.exe", L"msedge.exe",
