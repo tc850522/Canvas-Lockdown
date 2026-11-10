@@ -14,13 +14,20 @@ std::wstring toLowerCase(std::wstring str) {
     return str;
 }
 
-// Defines exactly what "doing homework" means by building a whitelist[cite: 4]
+// Defines exactly what "doing homework" means by building a whitelist
 bool isAuthorized(const std::wstring& procName) {
     std::vector<std::wstring> whitelist = {
+        // Educational / Authorized Apps
         L"code.exe", L"cmd.exe", L"powershell.exe", 
         L"chrome.exe", L"firefox.exe", L"msedge.exe",
-        L"python.exe", L"explorer.exe", L"svchost.exe",
-        L"taskmgr.exe", L"conhost.exe"
+        L"python.exe",
+        
+        // Critical Windows OS Processes
+        L"explorer.exe", L"svchost.exe", L"taskmgr.exe", L"conhost.exe",
+        L"csrss.exe", L"smss.exe", L"wininit.exe", L"winlogon.exe", 
+        L"services.exe", L"lsass.exe", L"dwm.exe", L"fontdrvhost.exe", 
+        L"sihost.exe", L"ctfmon.exe", L"runtimebroker.exe", L"wmiprvse.exe",
+        L"searchapp.exe", L"searchhost.exe", L"startmenuexperiencehost.exe"
     };
     for (const auto& allowed : whitelist) {
         if (procName == allowed) return true;
@@ -28,7 +35,7 @@ bool isAuthorized(const std::wstring& procName) {
     return false;
 }
 
-// Actively monitors and kills unauthorized processes[cite: 4]
+// Actively monitors and kills unauthorized processes
 void enforceLockdown() {
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap == INVALID_HANDLE_VALUE) return;
@@ -56,7 +63,7 @@ void enforceLockdown() {
     CloseHandle(hSnap);
 }
 
-// Background loop to poll the Python GUI's configuration file[cite: 4]
+// Background loop to poll the Python GUI's configuration file
 void checkConfigAndEnforce() {
     while (true) {
         std::ifstream configFile("config.json");
@@ -83,7 +90,7 @@ void checkConfigAndEnforce() {
                 enforceLockdown();
             }
         }
-        std::this_thread::sleep_for(std::chrono::seconds(5)); // Sweep the system every 5 seconds[cite: 2]
+        std::this_thread::sleep_for(std::chrono::seconds(5)); // Sweep the system every 5 seconds
     }
 }
 
