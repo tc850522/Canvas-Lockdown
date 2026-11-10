@@ -5,6 +5,7 @@ import threading
 import time
 import json
 from datetime import datetime, timedelta
+import subprocess # Added to start the enforcer.exe
 
 class CanvasLockdownApp:
     def __init__(self, root):
@@ -15,6 +16,7 @@ class CanvasLockdownApp:
         # State variables
         self.is_locked = False
         self.is_confirmed = False
+        self.is_paused = False # New state variable for tracking pause toggle
         self.pause_until = 0
         self.running = True
         
@@ -38,18 +40,19 @@ class CanvasLockdownApp:
         self.days_entry.insert(0, "0") 
         self.days_entry.pack()
 
-        # The new Confirm button
+        # The Confirm & Start button
         self.confirm_btn = tk.Button(self.root, text="Confirm & Start Enforcer", command=self.start_enforcer, bg="lightblue")
         self.confirm_btn.pack(pady=15)
 
         self.status_label = tk.Label(self.root, text="Status: Waiting for Input", fg="gray", font=("Arial", 14, "bold"))
         self.status_label.pack(pady=10)
 
-        self.pause_btn = tk.Button(self.root, text="Pause Lockdown (1 Hour)", command=self.pause_lockdown, state=tk.DISABLED)
+        # Pause/Unpause toggle button
+        self.pause_btn = tk.Button(self.root, text="Pause Lockdown (1 Hour)", command=self.toggle_pause, state=tk.DISABLED)
         self.pause_btn.pack(pady=10)
 
     def start_enforcer(self):
-        """Validates input and starts the polling thread once confirmed."""
+        """Validates input, starts the polling thread, and launches the C++ Daemon."""
         domain = self.domain_entry.get().strip()
         token = self.token_entry.get().strip()
         days = self.days_entry.get().strip()
@@ -60,7 +63,6 @@ class CanvasLockdownApp:
             return
             
         try:
-            # Check if token is already expired based on user input
             exp_date_obj = datetime.strptime(expire_date, "%Y-%m-%d").date()
             if exp_date_obj < datetime.now().date():
                 messagebox.showerror("Token Expired", "Your API token is already past its expiration date!")
@@ -73,18 +75,35 @@ class CanvasLockdownApp:
         self.confirm_btn.config(state=tk.DISABLED, text="Enforcer Running...")
         self.status_label.config(text="Status: Unlocked", fg="green")
         
-        # Start background API polling thread only after confirm is clicked
+        # Start background API polling thread
         self.api_thread = threading.Thread(target=self.poll_canvas_api, daemon=True)
         self.api_thread.start()
 
-    def pause_lockdown(self):
-        if self.is_locked and time.time() > self.pause_until:
-            # Add 3,600 seconds (1 hour) to current time
+        # Automatically start the C++ enforcer.exe process
+        try:
+            # Note: This assumes enforcer.exe is in the same directory.
+            # You must have launched the Python script as Administrator for the enforcer to inherit admin rights.
+            subprocess.Popen(["enforcer.exe"])
+        except Exception as e:
+            messagebox.showerror("Execution Error", f"Failed to start enforcer.exe: {e}\nEnsure it is compiled and in the same folder.")
+
+    def toggle_pause(self):
+        """Toggles between paused and unpaused states."""
+        if not self.is_paused:
+            # Activate Pause
             self.pause_until = int(time.time()) + 3600
+            self.is_paused = True
             self.status_label.config(text="Status: PAUSED (1 Hour)", fg="orange")
-            self.pause_btn.config(state=tk.DISABLED)
+            self.pause_btn.config(text="Unpause Lockdown")
             self.write_config()
-            self.root.after(3600000, self.update_ui_state)
+        else:
+            # Unpause manually before the timer is up
+            self.pause_until = 0
+            self.is_paused = False
+            self.pause_btn.config(text="Pause Lockdown (1 Hour)")
+            # Trigger an immediate UI update based on the current lock state
+            self.update_ui_state()
+            self.write_config()
 
     def write_config(self):
         """Writes the current state to a shared JSON file for the C++ Enforcer."""
@@ -137,12 +156,19 @@ class CanvasLockdownApp:
         
         self.is_locked = needs_lockdown
         self.write_config()
-        self.update_ui_state()
+        
+        # Only auto-update the UI if we aren't actively paused
+        if not self.is_paused:
+            self.update_ui_state()
 
     def update_ui_state(self):
-        if time.time() < self.pause_until:
-            self.status_label.config(text="Status: PAUSED", fg="orange")
-            self.pause_btn.config(state=tk.DISABLED)
+        # Handle the automatic expiration of the 1-hour pause
+        if self.is_paused and time.time() > self.pause_until:
+            self.is_paused = False
+            self.pause_until = 0
+            self.pause_btn.config(text="Pause Lockdown (1 Hour)")
+
+        if self.is_paused:
             return
             
         if self.is_locked:
