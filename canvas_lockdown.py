@@ -156,8 +156,9 @@ class CanvasLockdownApp:
             
             time.sleep(60) 
 
-    def evaluate_tasks(self, tasks, days_in_advance):
-        today = datetime.now().astimezone().date()
+   def evaluate_tasks(self, tasks, days_in_advance):
+        now = datetime.now().astimezone()
+        today = now.date()
         target_date = today + timedelta(days=days_in_advance)
         
         needs_lockdown = False
@@ -166,9 +167,12 @@ class CanvasLockdownApp:
             if 'assignment' in item and item['assignment']['due_at']:
                 due_at_str = item['assignment']['due_at']
                 utc_due_obj = datetime.fromisoformat(due_at_str.replace('Z', '+00:00'))
-                local_due_date = utc_due_obj.astimezone().date()
+                local_due_obj = utc_due_obj.astimezone()
+                local_due_date = local_due_obj.date()
                 
-                if local_due_date <= target_date:
+                # Ignore past-due days: only lock down if due between today and target_date
+                if today <= local_due_date <= target_date:
+                    print(f"Lockdown triggered by: {item['assignment'].get('name')} (Due: {local_due_obj})")
                     needs_lockdown = True
                     break
         
@@ -176,7 +180,7 @@ class CanvasLockdownApp:
         self.write_config()
         
         if not self.is_paused:
-            self.update_ui_state()
+            self.root.after(0, self.update_ui_state)
 
     def update_ui_state(self):
         if self.is_paused and time.time() > self.pause_until:
