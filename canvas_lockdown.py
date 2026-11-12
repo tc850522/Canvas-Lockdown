@@ -156,7 +156,7 @@ class CanvasLockdownApp:
             
             time.sleep(60) 
 
-   def evaluate_tasks(self, tasks, days_in_advance):
+    def evaluate_tasks(self, tasks, days_in_advance):
         now = datetime.now().astimezone()
         today = now.date()
         target_date = today + timedelta(days=days_in_advance)
