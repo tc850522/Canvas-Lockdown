@@ -7,11 +7,11 @@ To allow the application to securely check your upcoming homework, you must gene
 2. Navigate to your **Account Settings**.
 3. Scroll down to find the **Approved Integrations** section.
 4. Click the **New Access Token** button.
-5. Copy the generated token string and save it securely, as it provides full programmatic access to your account and will only be shown once.
+5. Copy the generated token string and save it.
 
 ## 🚀 How to Run the Code
 
-**Prerequisites:** Ensure you have Python installed, the `requests` library installed, and a C++ compiler (like MinGW-w64) set up on your Windows system.
+**Prerequisites:** Ensure you have Python installed, the `requests` library installed, and a C++ compiler (like MinGW-w64) set up on your Windows vm.
 
 ### Step 1: Install Python Dependencies
 Open your standard PowerShell or terminal and install the required library:
@@ -24,7 +24,6 @@ Navigate to your project directory in PowerShell and compile the C++ background 
 ```bash
 g++ enforcer.cpp -o enforcer.exe
 ```
-*(Note: If your file is named differently, such as `enforcer_2.cpp` or `enforcer_3.cpp`, replace `enforcer.cpp` with your exact file name.)*
 
 ### Step 3: Launch the Application (As Administrator)
 Because the C++ enforcer requires elevated system privileges to forcefully close unauthorized background processes, the Python GUI must be run with administrative rights so it can launch the daemon correctly.
