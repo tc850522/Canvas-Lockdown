@@ -8,27 +8,37 @@
 #include <algorithm>
 #include <thread>
 
-// Helper function to handle case-insensitive process names
 std::wstring toLowerCase(std::wstring str) {
     std::transform(str.begin(), str.end(), str.begin(), ::towlower);
     return str;
 }
 
-// Defines exactly what "doing homework" means by building a whitelist
+// Gets the directory where enforcer.exe is located so config.json is always found on boot
+std::string getConfigPath() {
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    std::string exePath(buffer);
+    size_t lastSlash = exePath.find_last_of("\\/");
+    if (lastSlash != std::string::npos) {
+        return exePath.substr(0, lastSlash + 1) + "config.json";
+    }
+    return "config.json";
+}
+
 bool isAuthorized(const std::wstring& procName) {
     std::vector<std::wstring> whitelist = {
         // The Enforcer Itself
         L"enforcer.exe",
-    
+
         // Educational / Authorized Apps
-        L"code.exe", L"cmd.exe", L"powershell.exe", 
+        L"code.exe", L"cmd.exe", L"powershell.exe",
         L"chrome.exe", L"firefox.exe", L"msedge.exe",
-        L"python.exe",
-        
+        L"python.exe", L"pythonw.exe",
+
         // Critical Windows OS Processes
         L"explorer.exe", L"svchost.exe", L"taskmgr.exe", L"conhost.exe",
-        L"csrss.exe", L"smss.exe", L"wininit.exe", L"winlogon.exe", 
-        L"services.exe", L"lsass.exe", L"dwm.exe", L"fontdrvhost.exe", 
+        L"csrss.exe", L"smss.exe", L"wininit.exe", L"winlogon.exe",
+        L"services.exe", L"lsass.exe", L"dwm.exe", L"fontdrvhost.exe",
         L"sihost.exe", L"ctfmon.exe", L"runtimebroker.exe", L"wmiprvse.exe",
         L"searchapp.exe", L"searchhost.exe", L"startmenuexperiencehost.exe"
     };
@@ -38,7 +48,6 @@ bool isAuthorized(const std::wstring& procName) {
     return false;
 }
 
-// Actively monitors and kills unauthorized processes
 void enforceLockdown() {
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap == INVALID_HANDLE_VALUE) return;
@@ -49,8 +58,7 @@ void enforceLockdown() {
     if (Process32FirstW(hSnap, &pe32)) {
         do {
             std::wstring procName = toLowerCase(pe32.szExeFile);
-            
-            // Skip protecting critical system processes like Idle and System for safety
+
             if (pe32.th32ProcessID == 0 || pe32.th32ProcessID == 4) continue;
 
             if (!isAuthorized(procName)) {
@@ -66,34 +74,36 @@ void enforceLockdown() {
     CloseHandle(hSnap);
 }
 
-// Background loop to poll the Python GUI's configuration file
 void checkConfigAndEnforce() {
+    std::string configPath = getConfigPath();
+
     while (true) {
-        std::ifstream configFile("config.json");
+        std::ifstream configFile(configPath);
         if (configFile.is_open()) {
             std::string content((std::istreambuf_iterator<char>(configFile)), std::istreambuf_iterator<char>());
-            
-            // Basic string parsing to read the Python JSON output without external C++ libraries
+
             bool isLocked = (content.find("\"is_locked\": true") != std::string::npos);
-            
+
             size_t pausePos = content.find("\"pause_until\": ");
             long long pauseUntil = 0;
-            if (pausePos != std::string::npos) {
-                std::string numStr = content.substr(pausePos + 15);
-                pauseUntil = std::stoll(numStr);
+            try {
+                if (pausePos != std::string::npos && pausePos + 15 < content.length()) {
+                    std::string numStr = content.substr(pausePos + 15);
+                    pauseUntil = std::stoll(numStr);
+                }
+            } catch (...) {
+                // Ignore partial writes while Python updates config.json
             }
 
-            // Get current timestamp
             auto now = std::chrono::system_clock::now();
             auto duration = now.time_since_epoch();
             long long currentTimestamp = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
 
-            // Enforce only if locked AND the 1-hour pause timer has passed
             if (isLocked && currentTimestamp > pauseUntil) {
                 enforceLockdown();
             }
         }
-        std::this_thread::sleep_for(std::chrono::seconds(5)); // Sweep the system every 5 seconds
+        std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }
 

@@ -5,15 +5,21 @@ import threading
 import time
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 import subprocess
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+ENFORCER_PATH = os.path.join(BASE_DIR, "enforcer.exe")
+
 
 class CanvasLockdownApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Canvas Homework Enforcer")
         self.root.geometry("400x520")
-        
+
         # State variables
         self.is_locked = False
         self.is_confirmed = False
@@ -21,14 +27,18 @@ class CanvasLockdownApp:
         self.pause_until = 0
         self.running = True
         self.enforcer_proc = None
-        
+
         # Thread-safe cached settings
         self.domain = ""
         self.token = ""
         self.days_or_date = "0"
-        
+
         self.build_gui()
-        self.load_config()
+        has_saved_config = self.load_config()
+
+        # Automatically resume enforcing & polling on PC startup if config exists
+        if has_saved_config:
+            self.root.after(500, self.auto_resume)
 
     def build_gui(self):
         tk.Label(self.root, text="Canvas Domain (e.g., https://canvas.edu):").pack(pady=5)
@@ -82,12 +92,15 @@ class CanvasLockdownApp:
             return None
 
     def load_config(self):
-        """Loads saved inputs from config.json to populate the GUI text boxes."""
-        if os.path.exists("config.json"):
+        """Loads saved inputs and prior lock state from config.json."""
+        if os.path.exists(CONFIG_PATH):
             try:
-                with open("config.json", "r") as f:
+                with open(CONFIG_PATH, "r") as f:
                     config_data = json.load(f)
-                    
+
+                self.is_locked = bool(config_data.get("is_locked", False))
+                self.pause_until = int(config_data.get("pause_until", 0))
+
                 if "domain" in config_data:
                     self.domain_entry.insert(0, config_data["domain"])
                 if "token" in config_data:
@@ -98,10 +111,28 @@ class CanvasLockdownApp:
                     self.days_entry.insert(0, config_data["days"])
                 else:
                     self.days_entry.insert(0, "0")
+
+                if self.pause_until > time.time():
+                    self.is_paused = True
+                    self.status_label.config(text="Status: PAUSED (1 Hour)", fg="orange")
+                    self.pause_btn.config(text="Unpause Lockdown", state=tk.NORMAL)
+                elif self.is_locked:
+                    self.update_ui_state()
+
+                return bool(
+                    config_data.get("domain")
+                    and config_data.get("token")
+                    and config_data.get("expire_date")
+                )
             except Exception as e:
                 print(f"Failed to load config: {e}")
         else:
             self.days_entry.insert(0, "0")
+        return False
+
+    def auto_resume(self):
+        """Starts the enforcer and Canvas polling automatically after boot."""
+        self.start_enforcer(silent_on_error=True)
 
     def write_config(self):
         """Writes the current state AND the user's text inputs to config.json."""
@@ -114,36 +145,51 @@ class CanvasLockdownApp:
             "days": self.days_or_date
         }
         try:
-            with open("config.json", "w") as f:
+            with open(CONFIG_PATH, "w") as f:
                 json.dump(config_data, f, indent=4)
         except Exception as e:
             print(f"Config write error: {e}")
 
-    def start_enforcer(self):
+    def is_enforcer_running(self):
+        """Checks if enforcer.exe is already running (e.g. launched by Task Scheduler)."""
+        try:
+            output = subprocess.check_output(
+                ["tasklist", "/FI", "IMAGENAME eq enforcer.exe"],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            ).decode(errors="ignore")
+            return "enforcer.exe" in output.lower()
+        except Exception:
+            return False
+
+    def start_enforcer(self, silent_on_error=False):
         domain = self.domain_entry.get().strip().rstrip("/")
         token = self.token_entry.get().strip()
         days_or_date = self.days_entry.get().strip()
         expire_date = self.expire_entry.get().strip()
 
         if not domain or not token or not days_or_date or not expire_date:
-            messagebox.showwarning("Missing Input", "Please fill in all fields before confirming.")
+            if not silent_on_error:
+                messagebox.showwarning("Missing Input", "Please fill in all fields before confirming.")
             return
 
         target_date = self.parse_target_date(days_or_date)
         if target_date is None:
-            messagebox.showerror(
-                "Invalid Lookahead",
-                "Enter either a whole number of days (e.g., 7) or a date (YYYY-MM-DD)."
-            )
+            if not silent_on_error:
+                messagebox.showerror(
+                    "Invalid Lookahead",
+                    "Enter either a whole number of days (e.g., 7) or a date (YYYY-MM-DD)."
+                )
             return
-            
+
         try:
             exp_date_obj = datetime.strptime(expire_date, "%Y-%m-%d").date()
             if exp_date_obj < datetime.now().date():
-                messagebox.showerror("Token Expired", "Your API token is already past its expiration date!")
+                if not silent_on_error:
+                    messagebox.showerror("Token Expired", "Your API token is already past its expiration date!")
                 return
         except ValueError:
-            messagebox.showerror("Invalid Date", "Please format the expiration date as YYYY-MM-DD.")
+            if not silent_on_error:
+                messagebox.showerror("Invalid Date", "Please format the expiration date as YYYY-MM-DD.")
             return
 
         self.domain = domain
@@ -152,20 +198,19 @@ class CanvasLockdownApp:
         self.write_config()
 
         # Launch enforcer.exe if it isn't already running
-        if self.enforcer_proc is None or self.enforcer_proc.poll() is not None:
+        if not self.is_enforcer_running() and (self.enforcer_proc is None or self.enforcer_proc.poll() is not None):
             try:
-                enforcer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "enforcer.exe")
-                if not os.path.exists(enforcer_path):
-                    enforcer_path = "enforcer.exe"
                 self.enforcer_proc = subprocess.Popen(
-                    [enforcer_path],
+                    [ENFORCER_PATH],
+                    cwd=BASE_DIR,
                     creationflags=subprocess.CREATE_NEW_CONSOLE
                 )
             except Exception as e:
-                messagebox.showerror(
-                    "Execution Error",
-                    f"Failed to start enforcer.exe: {e}\nEnsure it is compiled and in the same folder."
-                )
+                if not silent_on_error:
+                    messagebox.showerror(
+                        "Execution Error",
+                        f"Failed to start enforcer.exe: {e}\nEnsure it is compiled and in the same folder."
+                    )
 
         if not self.is_confirmed:
             self.is_confirmed = True
@@ -173,7 +218,6 @@ class CanvasLockdownApp:
             self.api_thread = threading.Thread(target=self.poll_canvas_api, daemon=True)
             self.api_thread.start()
         else:
-            # Trigger an immediate check when the user updates the date/days
             threading.Thread(target=self.check_once, daemon=True).start()
 
     def toggle_pause(self):
@@ -197,7 +241,6 @@ class CanvasLockdownApp:
             return
 
         headers = {"Authorization": f"Bearer {self.token}"}
-        # Use Canvas Planner API so future assignments beyond 7 days are included
         url = f"{self.domain}/api/v1/planner/items"
         params = {
             "start_date": today.isoformat(),
@@ -223,25 +266,22 @@ class CanvasLockdownApp:
     def evaluate_tasks(self, items, today, target_date):
         needs_lockdown = False
         homework_types = {"assignment", "quiz", "discussion_topic", "sub_assignment"}
-        
+
         print(f"\nChecking homework due between {today} and {target_date}...")
-        
+
         for item in items:
-            # Support both /api/v1/planner/items and /api/v1/users/self/todo formats
             if "plannable_type" in item:
                 if item.get("plannable_type") not in homework_types:
                     continue
-                
-                # Skip if manually marked complete on the Canvas planner
+
                 override = item.get("planner_override")
                 if isinstance(override, dict) and override.get("marked_complete"):
                     continue
-                
-                # Skip if already submitted
+
                 subs = item.get("submissions")
                 if isinstance(subs, dict) and subs.get("submitted"):
                     continue
-                
+
                 plannable = item.get("plannable", {})
                 due_at_str = plannable.get("due_at") or item.get("plannable_date")
                 name = plannable.get("title") or plannable.get("name") or "Unnamed Task"
@@ -257,20 +297,20 @@ class CanvasLockdownApp:
             utc_due_obj = datetime.fromisoformat(due_at_str.replace("Z", "+00:00"))
             local_due_obj = utc_due_obj.astimezone()
             local_due_date = local_due_obj.date()
-            
+
             print(f" - Found: '{name}' | Local Due Date: {local_due_date}")
-            
+
             if today <= local_due_date <= target_date:
                 print(f"--> LOCKDOWN TRIGGERED by: '{name}' (Due: {local_due_obj})")
                 needs_lockdown = True
                 break
-        
+
         if not needs_lockdown:
             print("--> No incomplete homework due in this window. System unlocked.")
 
         self.is_locked = needs_lockdown
         self.write_config()
-        
+
         if not self.is_paused:
             self.root.after(0, self.update_ui_state)
 
@@ -282,7 +322,7 @@ class CanvasLockdownApp:
 
         if self.is_paused:
             return
-            
+
         if self.is_locked:
             self.status_label.config(text="Status: LOCKED DOWN", fg="red")
             self.pause_btn.config(state=tk.NORMAL)
@@ -291,10 +331,11 @@ class CanvasLockdownApp:
             self.pause_btn.config(state=tk.DISABLED)
 
     def on_closing(self):
+        # Do NOT reset self.is_locked here so lock state persists across reboots
         self.running = False
-        self.is_locked = False
         self.write_config()
         self.root.destroy()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
